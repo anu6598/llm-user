@@ -41,7 +41,7 @@ if uploaded_file:
         with st.spinner("Generating answer..."):
             try:
                 response = openai.chat.completions.create(
-                    model="gpt-5-mini",  # you can change to "gpt-4" if you have access
+                    model="gpt-3.5-turbo",  # you can change to "gpt-4" if you have access
                     messages=[
                         {"role": "system", "content": "You are a helpful data analyst."},
                         {"role": "user", "content": prompt}
