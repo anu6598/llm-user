@@ -1,5 +1,5 @@
 streamlit>=1.24.1
 pandas
 openai
-langchain
-langchain-community
+langchain>=0.1.231
+python-dotenv
