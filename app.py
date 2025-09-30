@@ -5,6 +5,12 @@ from langchain.agents import create_pandas_dataframe_agent
 from dotenv import load_dotenv
 import os
 
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# or if using streamlit secrets directly
+import streamlit as st
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+
 # Load environment variables from .env if present
 load_dotenv()
 
