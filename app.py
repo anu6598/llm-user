@@ -1,33 +1,31 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
+import os
 
 # Streamlit page config
-st.set_page_config(page_title="CSV Q&A with Free AI", layout="wide")
-st.title("📊 CSV Q&A with Free AI")
+st.set_page_config(page_title="CSV Q&A with Hugging Face", layout="wide")
+st.title("📊 CSV Q&A with Hugging Face")
 
-def query_openrouter(prompt):
-    """Use OpenRouter free tier - more reliable"""
+def query_huggingface_free(prompt):
+    """
+    Use Hugging Face Inference API with FREE models that actually work
+    No token required for some public models
+    """
     try:
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": "Bearer free",  # Free tier
-                "HTTP-Referer": "https://your-app.com",  # Required but can be any URL
-                "X-Title": "CSV Analyzer"  # Required but can be any title
-            },
-            json={
-                "model": "google/gemma-7b-it:free",  # Free model
-                "messages": [
-                    {"role": "system", "content": "You are a helpful data analyst."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.1,
-                "max_tokens": 500
-            },
-            timeout=30
-        )
+        # Using a public model that doesn't require authentication
+        API_URL = "https://api-inference.huggingface.co/models/gpt2"
+        
+        response = requests.post(API_URL, json={
+            "inputs": prompt,
+            "parameters": {
+                "max_length": 300,
+                "temperature": 0.7,
+                "do_sample": True,
+                "return_full_text": False
+            }
+        }, timeout=30)
+        
         return response
     except Exception as e:
         return None
@@ -46,29 +44,37 @@ if uploaded_file:
     if user_question:
         # Prepare prompt
         prompt = f"""
-        You are a data analyst assistant.
-        The dataset has the following columns: {', '.join(df.columns)}.
-        Dataset preview: {df.head().to_string()}
+        As a data analyst, analyze this dataset with columns: {list(df.columns)}
+        Data shape: {len(df)} rows, {len(df.columns)} columns
         
-        Answer this question based on the dataset: {user_question}
+        Question: {user_question}
         
-        Provide specific insights and analysis. If you need calculations, explain what should be calculated.
+        Provide analytical insights based on the dataset structure.
         """
         
-        with st.spinner("Analyzing your data with AI..."):
-            response = query_openrouter(prompt)
+        with st.spinner("Analyzing with AI... (Free model - may take 20 seconds)"):
+            response = query_huggingface_free(prompt)
             
             if response is None:
-                st.error("Network error. Please check your connection and try again.")
+                st.error("Network error occurred")
             elif response.status_code == 200:
                 result = response.json()
-                answer = result["choices"][0]["message"]["content"]
-                st.success("✅ Analysis Results:")
-                st.write(answer)
-            elif response.status_code == 429:
-                st.warning("⚠️ Free tier limit reached. Please try again in a few minutes.")
+                if isinstance(result, list) and len(result) > 0:
+                    if 'generated_text' in result[0]:
+                        answer = result[0]['generated_text']
+                        st.success("✅ Analysis:")
+                        st.write(answer)
+                    else:
+                        st.write("**Raw response:**", result)
+                else:
+                    st.error("Unexpected response format")
+            elif response.status_code == 503:
+                st.warning("""
+                ⏳ Model is loading... This is normal for free Hugging Face models.
+                **Please wait 20 seconds and try again** - the model needs to wake up.
+                """)
             else:
-                st.error(f"API Error {response.status_code}: {response.text}")
+                st.error(f"API Error {response.status_code}. Try the local analysis option below.")
 
 else:
     st.info("👆 Please upload a CSV file to get started")
