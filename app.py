@@ -2,150 +2,117 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
-import time
 
 # Streamlit page config
 st.set_page_config(page_title="CSV Q&A with Hugging Face", layout="wide")
 st.title("📊 CSV Q&A with Hugging Face")
 
-@st.cache_data
-def load_data(uploaded_file):
-    return pd.read_csv(uploaded_file)
-
-def query_huggingface(prompt, hf_token, max_retries=3):
-    """Query Hugging Face API with retry logic"""
+def setup_huggingface_token():
+    """Helper function to setup and validate Hugging Face token"""
+    HF_TOKEN = st.secrets.get("HF_TOKEN") or os.getenv("HF_TOKEN")
     
-    # Using a more reliable free model
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
-    headers = {"Authorization": f"Bearer {hf_token}"}
+    if not HF_TOKEN:
+        st.error("""
+        ## 🔐 Hugging Face Token Required
+        
+        **To use this app, you need a FREE Hugging Face token:**
+        
+        1. **Create Account/Login** at [huggingface.co](https://huggingface.co)
+        2. **Get Token** from [Settings → Access Tokens](https://huggingface.co/settings/tokens)
+        3. **Choose Token Type**: Select **"Read"** 
+        4. **Add to Streamlit Secrets**:
+           - Go to your app settings in Streamlit Cloud
+           - Add: `HF_TOKEN = "your_token_here"`
+        
+        ⚠️ **Token starts with** `hf_` - make sure to copy the entire token!
+        """)
+        return None
     
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(API_URL, headers=headers, json={
-                "inputs": prompt,
-                "parameters": {
-                    "max_length": 400,
-                    "temperature": 0.1,
-                    "do_sample": True,
-                    "return_full_text": False
-                },
-                "options": {
-                    "wait_for_model": True
-                }
-            })
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result
-            elif response.status_code == 503:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 5  # 5, 10, 15 seconds
-                    st.info(f"Model is loading... waiting {wait_time} seconds")
-                    time.sleep(wait_time)
-                    continue
-                else:
-                    return {"error": "Model is still loading. Please try again in a minute."}
-            else:
-                return {"error": f"API Error {response.status_code}: {response.text}"}
-                
-        except requests.exceptions.RequestException as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)
-                continue
-            return {"error": f"Request failed: {str(e)}"}
+    # Validate token format
+    if not HF_TOKEN.startswith('hf_'):
+        st.error("""
+        ❌ Invalid token format!
+        - Hugging Face tokens should start with `hf_`
+        - Please check you copied the entire token
+        - Get a new one from [Hugging Face Settings](https://huggingface.co/settings/tokens)
+        """)
+        return None
     
-    return {"error": "Max retries exceeded"}
+    return HF_TOKEN
 
 # CSV uploader
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+
 if uploaded_file:
-    df = load_data(uploaded_file)
+    df = pd.read_csv(uploaded_file)
     st.subheader("Preview of your data")
     st.dataframe(df.head())
-
-    # Show basic dataset info
-    with st.expander("Dataset Overview"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Rows", len(df))
-        with col2:
-            st.metric("Columns", len(df.columns))
-        with col3:
-            st.metric("Memory", f"{df.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
-        
-        st.write("**Columns:**", ", ".join(df.columns.tolist()))
-
+    
     st.subheader("Ask questions about your dataset")
-    user_question = st.text_area("Type your question here:", height=100, 
-                                placeholder="E.g., What are the main trends in this data? What insights can you derive from the numeric columns?")
-
+    user_question = st.text_input("Type your question here:")
+    
     if user_question:
+        # Setup token first
+        HF_TOKEN = setup_huggingface_token()
+        if not HF_TOKEN:
+            st.stop()
+            
         # Prepare prompt
         prompt = f"""
-        You are a data analyst assistant. Analyze the following dataset and provide insights.
-
-        Dataset columns: {', '.join(df.columns)}
-        Dataset shape: {df.shape[0]} rows, {df.shape[1]} columns
+        You are a data analyst assistant.
+        The dataset has the following columns: {', '.join(df.columns)}.
+        Answer the following question based on the dataset. Use precise numbers and examples where possible.
 
         Question: {user_question}
-
-        Please provide a concise, data-driven answer. If the question requires specific calculations, explain what you would calculate and why.
         """
-
-        with st.spinner("Analyzing your data... (This may take 10-30 seconds for free models)"):
-            # Get Hugging Face token from secrets
-            HF_TOKEN = st.secrets.get("HF_TOKEN")
-            
-            if not HF_TOKEN:
-                st.error("""
-                🔐 Hugging Face token not found. Please add it to your Streamlit secrets:
+        
+        with st.spinner("Generating answer... (Free models may take 20-30 seconds on first use)"):
+            try:
+                # Using Hugging Face Inference API
+                API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+                headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+        
+                response = requests.post(API_URL, headers=headers, json={
+                    "inputs": prompt,
+                    "parameters": {"max_length": 500}
+                })
                 
-                1. Go to https://huggingface.co/settings/tokens
-                2. Create a free token (no payment needed)
-                3. Add it to your Streamlit Cloud secrets as `HF_TOKEN`
-                """)
-                st.stop()
-            
-            result = query_huggingface(prompt, HF_TOKEN)
-            
-            if "error" in result:
-                st.error(f"❌ {result['error']}")
-                
-                if "loading" in result['error'].lower():
-                    st.info("""
-                    💡 **Tip for free Hugging Face models:** 
-                    - Models spin down after inactivity
-                    - First request may take 20-30 seconds to wake up
-                    - Subsequent requests will be faster
-                    - Try again in 30 seconds!
-                    """)
-            else:
-                if isinstance(result, list) and len(result) > 0:
-                    if 'generated_text' in result[0]:
-                        answer = result[0]['generated_text']
+                if response.status_code == 200:
+                    result = response.json()
+                    if isinstance(result, list) and len(result) > 0:
+                        answer = result[0].get('generated_text', str(result))
+                        st.success("✅ Answer:")
+                        st.write(answer)
                     else:
-                        # Handle different response formats
-                        answer = str(result[0])
+                        st.error("Unexpected response format")
+                elif response.status_code == 503:
+                    st.warning("""
+                    ⏳ Model is loading... 
                     
-                    st.success("✅ Analysis Results:")
-                    st.write(answer)
-                    
-                    # Add some helpful follow-up
-                    st.info("💡 **Follow-up ideas:** Try asking about specific columns, trends, or correlations in your data.")
+                    **This is normal for free Hugging Face models!**
+                    - Models spin down when not in use
+                    - First request takes 20-30 seconds to wake up
+                    - Try again in 30 seconds - it will be faster!
+                    """)
                 else:
-                    st.error("Unexpected response format from the model")
+                    st.error(f"API Error: {response.status_code} - {response.text}")
+                    
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 else:
     st.info("👆 Please upload a CSV file to get started")
-    st.markdown("""
-    ### How to use:
-    1. Upload a CSV file
-    2. Ask questions about your data
-    3. Get AI-powered insights
     
-    ### Example questions:
-    - "What are the main trends in this data?"
-    - "Which columns have the strongest correlation?"
-    - "What insights can you derive from the numeric columns?"
-    - "Are there any data quality issues I should know about?"
-    """)
+    with st.expander("ℹ️ How to get your FREE Hugging Face token"):
+        st.markdown("""
+        1. **Go to [huggingface.co](https://huggingface.co)**
+        2. **Create account** (or login if you have one)
+        3. **Click your profile picture** → **Settings**
+        4. **Go to Access Tokens** in left sidebar
+        5. **Click "New token"**
+        6. **Choose "Read" role** and give it a name
+        7. **Copy the token** (starts with `hf_`)
+        8. **Add to Streamlit Cloud secrets** as `HF_TOKEN`
+        
+        ✅ **That's it! No credit card required. Completely free.**
+        """)
