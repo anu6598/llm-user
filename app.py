@@ -4,8 +4,9 @@ import os
 from dotenv import load_dotenv
 
 # LangChain imports for latest version
-from langchain.agents import create_pandas_dataframe_agent
 from langchain.chat_models import ChatOpenAI
+from langchain_experimental.pandas import create_pandas_dataframe_agent
+
 
 # Load environment variables from .env if present
 load_dotenv()
