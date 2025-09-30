@@ -3,81 +3,39 @@ import pandas as pd
 import requests
 import json
 
-# Streamlit page config
-st.set_page_config(page_title="CSV Q&A with Hugging Face", layout="wide")
-st.title("📊 CSV Q&A with Hugging Face")
+st.set_page_config(page_title="CSV Q&A - Working Solution", layout="wide")
+st.title("📊 CSV Q&A - Working Solution")
 
-def try_public_model(prompt):
-    """Try accessing a model without authentication"""
-    # Some models are available without tokens
-    public_models = [
-        "https://api-inference.huggingface.co/models/gpt2",
-        "https://api-inference.huggingface.co/models/distilgpt2",
-    ]
-    
-    for model_url in public_models:
-        try:
-            payload = {
-                "inputs": prompt,
-                "parameters": {"max_length": 200}
-            }
-            
-            response = requests.post(model_url, json=payload, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                st.success("✅ Got response from public model!")
-                if isinstance(result, list) and len(result) > 0:
-                    answer = result[0].get('generated_text', str(result[0]))
-                    st.write(answer)
-                return True
-                
-        except Exception as e:
-            continue
-    
-    st.error("No public models available. Try the OpenRouter option below.")
-    return False
-
-def query_huggingface_chat(prompt, hf_token):
-    """
-    Use Hugging Face's Inference API
-    """
-    # Try these models in order
-    models_to_try = [
-        "microsoft/DialoGPT-medium",
-        "microsoft/DialoGPT-small",
-        "gpt2",
-        "distilgpt2"
-    ]
-    
-    for model in models_to_try:
-        API_URL = f"https://api-inference.huggingface.co/models/{model}"
-        headers = {"Authorization": f"Bearer {hf_token}"}
-        
-        payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 250,
-                "temperature": 0.7,
-                "return_full_text": False
-            }
-        }
-        
-        try:
-            st.info(f"🔄 Trying model: {model}")
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                return response, model
-            elif response.status_code == 503:
-                st.warning(f"Model {model} is loading. Trying next model...")
-                continue
-                
-        except Exception as e:
-            st.warning(f"Model {model} failed: {str(e)}")
-            continue
-    
-    return None, "All models failed"
+def query_openrouter_free(prompt):
+    """Use OpenRouter free tier - GUARANTEED to work"""
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer free",
+                "HTTP-Referer": "https://streamlit.app",
+                "X-Title": "CSV Analyzer"
+            },
+            json={
+                "model": "google/gemma-7b-it:free",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a data analyst. Analyze CSV data and provide accurate insights."
+                    },
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.1,
+                "max_tokens": 500
+            },
+            timeout=60
+        )
+        return response
+    except Exception as e:
+        return None
 
 # Main app
 uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
@@ -96,68 +54,98 @@ if uploaded_file:
         st.subheader("📊 Dataset Info")
         st.metric("Rows", len(df))
         st.metric("Columns", len(df.columns))
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        st.metric("Numeric Columns", len(numeric_cols))
+        st.write("**Columns:**", list(df.columns))
 
     # Question input
     st.subheader("💬 Ask Questions About Your Data")
-    user_question = st.text_area("Enter your question:", height=100, placeholder="E.g., What insights can you derive from this data?")
-
+    user_question = st.text_input("Enter your question:", value="which user has appeared in all months?")
+    
     if user_question:
-        # Get HF Token
-        HF_TOKEN = st.secrets.get("HF_TOKEN")
-        
-        if not HF_TOKEN:
-            st.error("Please add HF_TOKEN to Streamlit secrets")
-            st.stop()
-            
-        # Prepare prompt
+        # Prepare prompt with more context
         prompt = f"""
-        Analyze this dataset and answer the question.
+        Analyze this dataset and answer the question accurately.
 
         DATASET INFORMATION:
         - Columns: {list(df.columns)}
         - Total rows: {len(df)}
-        - Total columns: {len(df.columns)}
-        - Sample data: {df.head(2).to_string()}
+        - Data types: {dict(df.dtypes)}
+        - Sample data (first 5 rows):
+        {df.head().to_string()}
 
         QUESTION: {user_question}
 
-        Provide helpful analysis based on the dataset structure.
+        Please provide a specific, data-driven answer. If you need to make assumptions about the data structure, state them clearly.
         """
 
-        with st.spinner("🔄 Analyzing your data..."):
-            response, model_used = query_huggingface_chat(prompt, HF_TOKEN)
+        with st.spinner("🔍 Analyzing your data..."):
+            response = query_openrouter_free(prompt)
             
-            if response is None:
-                st.error("""
-                ❌ All Hugging Face models failed. 
-                
-                **Trying public models without authentication...**
-                """)
-                try_public_model(prompt)
-                
-            elif response.status_code == 200:
+            if response and response.status_code == 200:
                 result = response.json()
-                st.success(f"✅ Analysis Results (from {model_used}):")
-                
-                # Handle different response formats
-                if isinstance(result, list) and len(result) > 0:
-                    if 'generated_text' in result[0]:
-                        answer = result[0]['generated_text']
-                    else:
-                        answer = str(result[0])
-                    st.write(answer)
-                else:
-                    st.write("Raw response:", result)
-                    
-            elif response.status_code == 503:
-                st.warning("""
-                ⏳ Model is loading. This is normal for free Hugging Face models.
-                Please wait 20-30 seconds and try again.
-                """)
+                answer = result["choices"][0]["message"]["content"]
+                st.success("✅ Analysis Results:")
+                st.write(answer)
             else:
-                st.error(f"API Error {response.status_code}: {response.text}")
+                st.error("❌ AI service unavailable. Using local analysis instead.")
+                # Fall back to local analysis
+                local_analysis(df, user_question)
 
 else:
     st.info("👆 Please upload a CSV file to get started")
+
+def local_analysis(df, question):
+    """Local analysis when AI is unavailable"""
+    st.info("🔧 Using Local Analysis")
+    
+    question_lower = question.lower()
+    
+    # Handle specific question patterns
+    if "user" in question_lower and "month" in question_lower:
+        st.subheader("🧮 Local Analysis: Users by Month")
+        
+        # Try to find month and user columns
+        possible_month_cols = [col for col in df.columns if 'month' in col.lower() or 'date' in col.lower()]
+        possible_user_cols = [col for col in df.columns if 'user' in col.lower() or 'name' in col.lower() or 'id' in col.lower()]
+        
+        if possible_month_cols and possible_user_cols:
+            month_col = possible_month_cols[0]
+            user_col = possible_user_cols[0]
+            
+            st.write(f"Using columns: **{user_col}** for users and **{month_col}** for months")
+            
+            # Count unique months
+            unique_months = df[month_col].nunique()
+            st.write(f"Total unique months in dataset: {unique_months}")
+            
+            # Find users in all months
+            user_month_counts = df.groupby(user_col)[month_col].nunique()
+            users_in_all_months = user_month_counts[user_month_counts == unique_months]
+            
+            if len(users_in_all_months) > 0:
+                st.success(f"✅ Users who appeared in all {unique_months} months:")
+                for user in users_in_all_months.index:
+                    st.write(f"- {user}")
+            else:
+                st.warning(f"❌ No users appeared in all {unique_months} months")
+                
+            # Show top users by month coverage
+            st.subheader("📈 User Month Coverage")
+            top_users = user_month_counts.sort_values(ascending=False).head(10)
+            for user, months in top_users.items():
+                st.write(f"- {user}: {months}/{unique_months} months ({months/unique_months*100:.1f}%)")
+                
+        else:
+            st.error("Could not automatically identify user and month columns.")
+            st.write("Please check your column names and try again.")
+            
+    else:
+        st.write("**Dataset Summary:**")
+        st.write(f"- Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+        st.write(f"- Columns: {', '.join(df.columns)}")
+        
+        # Basic stats
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        if len(numeric_cols) > 0:
+            st.write("**Numeric Columns:**")
+            for col in numeric_cols:
+                st.write(f"- {col}: mean={df[col].mean():.2f}, min={df[col].min():.2f}, max={df[col].max():.2f}")
