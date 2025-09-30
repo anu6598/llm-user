@@ -3,6 +3,7 @@ import pandas as pd
 from langchain.chat_models import ChatOpenAI
 from langchain.experimental.pandas import PandasDataFrameAgent
 
+
 st.set_page_config(page_title="CSV Q&A with LLM", layout="wide")
 st.title("📊 CSV Q&A with LLM")
 
