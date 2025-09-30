@@ -33,6 +33,12 @@ st.markdown("""
         border-radius: 10px;
         border: 2px dashed #dee2e6;
     }
+    .analysis-result {
+        background-color: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 4px solid #1f77b4;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,12 +79,28 @@ class CSVDataAnalyzer:
     def analyze_question(self, question):
         """Analyze the user's question and provide relevant insights"""
         if self.df is None:
-            return "Please upload a CSV file first."
+            return "Please upload a CSV file first.", None
         
         question_lower = question.lower()
         
+        # Handle specific analytical questions
+        if any(word in question_lower for word in ['most', 'highest', 'top', 'maximum', 'max']):
+            return self.analyze_max_min_questions(question, 'max')
+        
+        elif any(word in question_lower for word in ['least', 'lowest', 'bottom', 'minimum', 'min']):
+            return self.analyze_max_min_questions(question, 'min')
+        
+        elif any(word in question_lower for word in ['average', 'mean']):
+            return self.analyze_average_questions(question)
+        
+        elif any(word in question_lower for word in ['sum', 'total']):
+            return self.analyze_sum_questions(question)
+        
+        elif any(word in question_lower for word in ['count', 'how many']):
+            return self.analyze_count_questions(question)
+        
         # Basic statistics
-        if any(word in question_lower for word in ['statistic', 'summary', 'describe', 'overview']):
+        elif any(word in question_lower for word in ['statistic', 'summary', 'describe', 'overview']):
             return self.get_basic_statistics()
         
         # Data information
@@ -101,23 +123,171 @@ class CSVDataAnalyzer:
         elif any(word in question_lower for word in ['distribution', 'histogram', 'frequency']):
             return self.analyze_distribution(question)
         
-        # Top values
-        elif any(word in question_lower for word in ['top', 'highest', 'lowest', 'maximum', 'minimum']):
-            return self.analyze_extremes(question)
-        
         # Default response for other questions
         else:
             return self.general_analysis(question)
+    
+    def analyze_max_min_questions(self, question, analysis_type):
+        """Analyze questions about maximum/minimum values"""
+        # Find numeric columns mentioned in the question
+        numeric_cols = self.df.select_dtypes(include=['number']).columns
+        mentioned_columns = []
+        
+        for col in self.df.columns:
+            if col.lower() in question.lower():
+                mentioned_columns.append(col)
+        
+        # If no specific columns mentioned, use all numeric columns
+        if not mentioned_columns:
+            mentioned_columns = numeric_cols.tolist()
+        
+        results = []
+        visualizations = []
+        
+        for col in mentioned_columns:
+            if col in self.df.columns and self.df[col].dtype in ['int64', 'float64']:
+                if analysis_type == 'max':
+                    max_value = self.df[col].max()
+                    max_rows = self.df[self.df[col] == max_value]
+                    
+                    if len(max_rows) == 1:
+                        result_text = f"**Maximum value in '{col}':** {max_value}"
+                        # Try to find user/name column to show who has this value
+                        user_col = self.find_user_column()
+                        if user_col:
+                            user_name = max_rows[user_col].iloc[0]
+                            result_text += f"\n**User with maximum {col}:** {user_name}"
+                    else:
+                        result_text = f"**Maximum value in '{col}':** {max_value} (found in {len(max_rows)} records)"
+                    
+                    results.append(result_text)
+                    
+                    # Create visualization for top values
+                    if len(self.df) > 1:
+                        top_10 = self.df.nlargest(10, col)[[user_col if user_col else col, col]]
+                        fig = px.bar(top_10, x=user_col if user_col else col, y=col, 
+                                   title=f"Top 10 Values in {col}")
+                        visualizations.append(fig)
+                
+                else:  # min analysis
+                    min_value = self.df[col].min()
+                    min_rows = self.df[self.df[col] == min_value]
+                    
+                    if len(min_rows) == 1:
+                        result_text = f"**Minimum value in '{col}':** {min_value}"
+                        user_col = self.find_user_column()
+                        if user_col:
+                            user_name = min_rows[user_col].iloc[0]
+                            result_text += f"\n**User with minimum {col}:** {user_name}"
+                    else:
+                        result_text = f"**Minimum value in '{col}':** {min_value} (found in {len(min_rows)} records)"
+                    
+                    results.append(result_text)
+        
+        if not results:
+            return f"No numeric columns found for {analysis_type} analysis.", None
+        
+        response = "\n\n".join(results)
+        return response, visualizations
+    
+    def analyze_average_questions(self, question):
+        """Analyze questions about averages"""
+        numeric_cols = self.df.select_dtypes(include=['number']).columns
+        mentioned_columns = []
+        
+        for col in self.df.columns:
+            if col.lower() in question.lower():
+                mentioned_columns.append(col)
+        
+        if not mentioned_columns:
+            mentioned_columns = numeric_cols.tolist()
+        
+        results = []
+        
+        for col in mentioned_columns:
+            if col in self.df.columns and self.df[col].dtype in ['int64', 'float64']:
+                avg_value = self.df[col].mean()
+                results.append(f"**Average of '{col}':** {avg_value:.2f}")
+        
+        if not results:
+            return "No numeric columns found for average calculation.", None
+        
+        return "\n\n".join(results), None
+    
+    def analyze_sum_questions(self, question):
+        """Analyze questions about sums/totals"""
+        numeric_cols = self.df.select_dtypes(include=['number']).columns
+        mentioned_columns = []
+        
+        for col in self.df.columns:
+            if col.lower() in question.lower():
+                mentioned_columns.append(col)
+        
+        if not mentioned_columns:
+            mentioned_columns = numeric_cols.tolist()
+        
+        results = []
+        
+        for col in mentioned_columns:
+            if col in self.df.columns and self.df[col].dtype in ['int64', 'float64']:
+                total_value = self.df[col].sum()
+                results.append(f"**Total sum of '{col}':** {total_value:,.2f}")
+        
+        if not results:
+            return "No numeric columns found for sum calculation.", None
+        
+        return "\n\n".join(results), None
+    
+    def analyze_count_questions(self, question):
+        """Analyze counting questions"""
+        results = []
+        
+        # Count unique values in categorical columns
+        if 'unique' in question.lower():
+            for col in self.df.select_dtypes(include=['object']).columns:
+                unique_count = self.df[col].nunique()
+                results.append(f"**Unique values in '{col}':** {unique_count}")
+        
+        # Count specific conditions
+        elif 'null' in question.lower() or 'missing' in question.lower():
+            for col in self.df.columns:
+                null_count = self.df[col].isnull().sum()
+                if null_count > 0:
+                    results.append(f"**Missing values in '{col}':** {null_count}")
+        
+        else:
+            # General row count
+            results.append(f"**Total number of records:** {len(self.df):,}")
+            
+            # Count by category if specific column mentioned
+            for col in self.df.columns:
+                if col.lower() in question.lower():
+                    if self.df[col].dtype == 'object':
+                        value_counts = self.df[col].value_counts().head(10)
+                        results.append(f"**Value counts for '{col}':**\n{value_counts.to_string()}")
+        
+        if not results:
+            return "Please specify what you'd like to count (e.g., 'unique users', 'missing values', 'total records').", None
+        
+        return "\n\n".join(results), None
+    
+    def find_user_column(self):
+        """Try to identify a user/name column in the dataset"""
+        user_like_columns = ['user', 'name', 'username', 'student', 'customer', 'person']
+        for col in self.df.columns:
+            if any(user_word in col.lower() for user_word in user_like_columns):
+                return col
+        return None
     
     def get_basic_statistics(self):
         """Provide basic statistics for numeric columns"""
         numeric_df = self.df.select_dtypes(include=['number'])
         
         if numeric_df.empty:
-            return "No numeric columns found for statistical analysis."
+            return "No numeric columns found for statistical analysis.", None
         
         stats = numeric_df.describe()
-        return f"**Basic Statistics for Numeric Columns:**\n\n{stats.to_string()}"
+        return f"**Basic Statistics for Numeric Columns:**\n\n{stats.to_string()}", None
     
     def get_data_info(self):
         """Provide dataset information"""
@@ -130,7 +300,7 @@ class CSVDataAnalyzer:
 - **Numeric Columns**: {', '.join(info['numeric_columns']) if info['numeric_columns'] else 'None'}
 - **Categorical Columns**: {', '.join(info['categorical_columns']) if info['categorical_columns'] else 'None'}
 """
-        return response
+        return response, None
     
     def get_missing_values(self):
         """Analyze missing values in the dataset"""
@@ -145,17 +315,17 @@ class CSVDataAnalyzer:
         if missing_data.sum() == 0:
             response += "No missing values found in the dataset!"
         
-        return response
+        return response, None
     
     def get_correlation_analysis(self):
         """Perform correlation analysis"""
         numeric_df = self.df.select_dtypes(include=['number'])
         
         if numeric_df.empty:
-            return "No numeric columns found for correlation analysis."
+            return "No numeric columns found for correlation analysis.", None
         
         if len(numeric_df.columns) < 2:
-            return "Need at least 2 numeric columns for correlation analysis."
+            return "Need at least 2 numeric columns for correlation analysis.", None
         
         correlation_matrix = numeric_df.corr()
         
@@ -166,7 +336,6 @@ class CSVDataAnalyzer:
             color_continuous_scale="RdBu_r",
             aspect="auto"
         )
-        st.plotly_chart(fig, use_container_width=True)
         
         # Find high correlations
         high_corr_pairs = []
@@ -190,20 +359,20 @@ class CSVDataAnalyzer:
         else:
             response += "No strong correlations found (|r| > 0.5)."
         
-        return response
+        return response, [fig]
     
     def analyze_specific_columns(self, question):
         """Analyze specific columns mentioned in the question"""
-        # Extract column names from the question
         columns_found = []
         for col in self.df.columns:
             if col.lower() in question.lower():
                 columns_found.append(col)
         
         if not columns_found:
-            return "Please specify which columns you'd like to analyze. Available columns: " + ", ".join(self.df.columns)
+            return "Please specify which columns you'd like to analyze. Available columns: " + ", ".join(self.df.columns), None
         
         response = f"**Analysis for columns: {', '.join(columns_found)}**\n\n"
+        visualizations = []
         
         for col in columns_found:
             if col in self.df.columns:
@@ -221,48 +390,34 @@ class CSVDataAnalyzer:
                     response += f"- Std: {self.df[col].std():.2f}\n"
                     response += f"- Min: {self.df[col].min():.2f}\n"
                     response += f"- Max: {self.df[col].max():.2f}\n"
+                    
+                    # Create distribution plot for numeric columns
+                    fig = px.histogram(self.df, x=col, title=f"Distribution of {col}")
+                    visualizations.append(fig)
                 
                 response += "\n"
         
-        return response
+        return response, visualizations
     
     def analyze_distribution(self, question):
         """Analyze distribution of numeric columns"""
         numeric_cols = self.df.select_dtypes(include=['number']).columns
         
         if numeric_cols.empty:
-            return "No numeric columns found for distribution analysis."
+            return "No numeric columns found for distribution analysis.", None
         
-        # Create distribution plots
-        for col in numeric_cols[:3]:  # Limit to first 3 numeric columns to avoid too many plots
+        visualizations = []
+        for col in numeric_cols[:3]:  # Limit to first 3 numeric columns
             fig = px.histogram(
                 self.df, 
                 x=col,
                 title=f"Distribution of {col}",
                 marginal="box"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            visualizations.append(fig)
         
-        return f"Displayed distribution plots for numeric columns. Analyzed distributions for: {', '.join(numeric_cols[:3])}"
-    
-    def analyze_extremes(self, question):
-        """Analyze top/bottom values"""
-        numeric_cols = self.df.select_dtypes(include=['number']).columns
-        
-        if numeric_cols.empty:
-            return "No numeric columns found for extreme value analysis."
-        
-        response = "**Extreme Values Analysis:**\n\n"
-        
-        for col in numeric_cols[:5]:  # Limit to first 5 columns
-            top_5 = self.df.nlargest(5, col)[[col]]
-            bottom_5 = self.df.nsmallest(5, col)[[col]]
-            
-            response += f"**{col}**:\n"
-            response += f"- Top 5 values:\n{top_5.to_string()}\n"
-            response += f"- Bottom 5 values:\n{bottom_5.to_string()}\n\n"
-        
-        return response
+        response = f"Displayed distribution plots for numeric columns. Analyzed distributions for: {', '.join(numeric_cols[:3])}"
+        return response, visualizations
     
     def general_analysis(self, question):
         """Provide general analysis for other types of questions"""
@@ -276,15 +431,15 @@ class CSVDataAnalyzer:
         response += f"- Categorical columns: {len(info['categorical_columns'])}\n\n"
         
         response += "**You can ask me about:**\n"
-        response += "- Basic statistics and summaries\n"
-        response += "- Data distributions and histograms\n"
-        response += "- Correlation between variables\n"
-        response += "- Missing values analysis\n"
-        response += "- Specific column information\n"
-        response += "- Top/bottom values\n"
-        response += "- Data quality issues\n"
+        response += "- 'Which user has the most total_lessons?'\n"
+        response += "- 'Show me the highest values in each column'\n"
+        response += "- 'What is the average age?'\n"
+        response += "- 'Total sum of sales'\n"
+        response += "- 'How many unique users?'\n"
+        response += "- Basic statistics and correlations\n"
+        response += "- Data distributions and missing values\n"
         
-        return response
+        return response, None
 
 def main():
     st.markdown('<h1 class="main-header">📊 CSV Data Analyzer</h1>', unsafe_allow_html=True)
@@ -293,6 +448,7 @@ def main():
     # Initialize analyzer
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = CSVDataAnalyzer()
+        st.session_state.chat_history = []
     
     analyzer = st.session_state.analyzer
     
@@ -325,13 +481,18 @@ def main():
         st.markdown("---")
         st.header("💡 Question Examples")
         st.write("""
-        Try asking:
-        - "Show me basic statistics"
-        - "What are the correlations?"
-        - "Are there missing values?"
-        - "Show distribution of numeric columns"
-        - "What are the top 5 values in each column?"
-        - "Tell me about column X"
+        **Analytical Questions:**
+        - "Which user has the most total_lessons?"
+        - "Show the highest sales amount"
+        - "What is the average score?"
+        - "Total revenue by category"
+        - "How many unique customers?"
+        
+        **General Questions:**
+        - "Basic statistics"
+        - "Correlation analysis"
+        - "Missing values"
+        - "Data distributions"
         """)
     
     # Main content area
@@ -391,37 +552,63 @@ def main():
         # Question input
         question = st.text_input(
             "Enter your question:",
-            placeholder="e.g., 'Show me basic statistics' or 'What are the correlations between variables?'",
-            help="Ask any question about your dataset"
+            placeholder="e.g., 'Which user has the most total_lessons?' or 'What is the average score?'",
+            help="Ask any analytical question about your dataset"
         )
         
-        # Pre-defined question buttons
+        # Pre-defined question buttons for common analytical questions
+        st.write("**Quick Questions:**")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("📊 Basic Stats"):
-                question = "show basic statistics"
+            if st.button("👑 Top User"):
+                question = "which user has the most"
         
         with col2:
-            if st.button("🔗 Correlations"):
-                question = "show correlations"
+            if st.button("📈 Max Value"):
+                question = "show maximum values"
         
         with col3:
-            if st.button("❓ Missing Values"):
-                question = "are there missing values"
+            if st.button("📊 Average"):
+                question = "what is the average"
         
         with col4:
-            if st.button("📈 Distributions"):
-                question = "show distributions"
+            if st.button("🔢 Count"):
+                question = "how many unique"
         
         # Process question
         if question:
             with st.spinner("Analyzing your data..."):
-                answer = analyzer.analyze_question(question)
+                answer, visualizations = analyzer.analyze_question(question)
+                
+                # Add to chat history
+                st.session_state.chat_history.append({
+                    'question': question,
+                    'answer': answer,
+                    'visualizations': visualizations
+                })
                 
                 # Display answer
                 st.markdown("### 💡 Analysis Result")
-                st.markdown(answer)
+                st.markdown(f'<div class="analysis-result">{answer}</div>', unsafe_allow_html=True)
+                
+                # Display visualizations if any
+                if visualizations:
+                    st.markdown("### 📊 Visualizations")
+                    for viz in visualizations:
+                        st.plotly_chart(viz, use_container_width=True)
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            st.markdown("---")
+            st.subheader("📝 Conversation History")
+            
+            for i, chat in enumerate(reversed(st.session_state.chat_history[-5:])):  # Show last 5
+                with st.expander(f"Q: {chat['question']}"):
+                    st.markdown(chat['answer'])
+                    if chat['visualizations']:
+                        for viz in chat['visualizations']:
+                            st.plotly_chart(viz, use_container_width=True)
     
     elif uploaded_file is None:
         # Welcome message when no file is uploaded
@@ -429,13 +616,13 @@ def main():
         <div style='text-align: center; padding: 50px;'>
             <h2>Welcome to CSV Data Analyzer! 🎉</h2>
             <p>Upload a CSV file to start exploring your data.</p>
-            <p>You can ask questions about:</p>
+            <p>You can ask analytical questions like:</p>
             <ul style='display: inline-block; text-align: left;'>
-                <li>Basic statistics and summaries</li>
-                <li>Data distributions and patterns</li>
-                <li>Correlations between variables</li>
-                <li>Missing values and data quality</li>
-                <li>Specific column analysis</li>
+                <li>"Which user has the most total_lessons?"</li>
+                <li>"What is the highest sales amount?"</li>
+                <li>"Show me the average score by category"</li>
+                <li>"How many unique customers are there?"</li>
+                <li>"Who has the minimum completion rate?"</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
